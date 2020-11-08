@@ -14,12 +14,12 @@ def cli(ctx):
     pass
 
 @cli.command('new-ca')
-@click.option('--ou', default='Cockroach', help='Organizational Unit')
-@click.option('--cn', default='Cockroach CA', help='Common Name')
-@click.option('--md', default='sha256', help='Message Digest')
-@click.option('--days', default=3650, help='CA Cert lifetime in days')
-@click.option('--ca-dir', default='ca', type=click.Path(), help='Path to the directory to store the CA files')
-@click.option('--prefix', default='ca', type=click.Path(exists=False))
+@click.option('--ou', default='Cockroach', help='Organizational Unit (default: Cockroach)')
+@click.option('--cn', default='Cockroach CA', help='Common Name (default: "Cockroach CA")')
+@click.option('--md', default='sha256', help='Message Digest (default: sha256')
+@click.option('--days', default=3650, help='CA Cert lifetime in days (default: 3650)')
+@click.option('--ca-dir', default='ca', type=click.Path(), help='Path to the directory to store the CA files (default: "ca")')
+@click.option('--prefix', default='ca', type=click.Path(exists=False), help='Filename prefix (default: "ca")')
 def new_ca(ou, cn, md, days, ca_dir, prefix):
     t = Template("""
 [ ca ]
@@ -79,7 +79,7 @@ extendedKeyUsage = clientAuth
     # First, make the private key
     if not os.path.exists(key):
         res = subprocess.call(['openssl', 'genrsa', '-out', key, "2048"])
-        if res != 0:
+        if res:
             raise Exception("Error calling openssl")
             sys.exit(1)
     else:
@@ -100,7 +100,7 @@ extendedKeyUsage = clientAuth
         '-config', cnf, '-key', key, '-out', crt, 
         '-days', str(days), '-batch'])
 
-    if res != 0:
+    if res:
         raise Exception("Error creating certificate request")
         sys.exit(1)
 
@@ -118,9 +118,98 @@ extendedKeyUsage = clientAuth
     
 
 @cli.command('new-node')
-@click.option('--name', default='node', help='Node name')
-def new_node(name):
-    print("In new_node")
+@click.option('--name', default=None, required=True, help='Node name')
+@click.option('--cert-path', default='node', help='Path to store certificates')
+@click.option('--ca-path', default='ca', help='Path to directory that holds CA')
+@click.option('--ca-prefix', default='ca', help='Prefix for CA key (default: ca)')
+@click.argument('sans', default=None, nargs=-1)
+def new_node(name, cert_path, ca_path, ca_prefix, sans):
+    """ SANS consist of one or more Subject Alternative Names 
+
+        Example: \n
+        crdb_ca.py new-node --name foo DNS:foo DNS:foo.mydomain IP:1.2.3.4
+    """
+    template = Template("""
+# OpenSSL node configuration file
+[ req ]
+prompt=no
+distinguished_name = distinguished_name
+req_extensions = extensions
+
+[ distinguished_name ]
+organizationName = {{ name }}
+
+[ extensions ]
+subjectAltName = {{ SANstring }}
+    """)
+    SANstring = ' '.join(sans)
+    #TODO - check the SAN formatting
+    print(SANstring)
+    
+    # Create the node's certificate directory
+    try:
+        os.mkdir(cert_path)
+        print("Created %s" % cert_path)
+    except FileExistsError:
+        print("%s already exists. Continuing" % cert_path)
+    except Exception as err:
+        print("Error: %s" % str(err))
+        sys.exit(1)
+
+    key = "%s.key" % name
+    crt = "%s.crt" % name
+    cnf = "%s.cnf" % name
+    csr = "%s.csr" % name
+
+    ca_cnf = "%s.cnf" % ca_prefix
+    ca_key = "%s.key" % ca_prefix
+    ca_crt = "%s.crt" % ca_prefix
+    
+    # Generate the node key
+    if not os.path.exists(key):
+        res = subprocess.call(['openssl', 'genrsa', '-out', key, '2048'], cwd=cert_path)
+        if res:
+            print("Error generating node private key")
+            sys.exit(1)
+    else:
+        print("Key already exists. Not creating a new one.")
+    
+    # Generate the node's config 
+    cnf_text = template.render(name=name, SANstring=SANstring)
+    fo = open("%s/%s" % (cert_path, cnf), "w")
+    fo.truncate()
+    fo.write(cnf_text)
+    fo.close()
+    print("Wrote certificate config to %s" % cnf)
+    
+    # Generate the CSR
+    res = subprocess.call([
+        'openssl', 'req', '-new',
+        '-config', cnf,
+        '-key', key,
+        '-out', csr,
+        '-batch'
+        ], cwd=cert_path)
+    if res:
+        print("Error generating CSR")
+        sys.exit(1)
+    print("Generated %s" % csr)
+
+    # Sign the CSR with the CA
+    res = subprocess.call([ 'openssl', 'ca', 
+        '-config', ca_cnf,
+        '-keyfile', ca_key,
+        '-cert', ca_crt,
+        '-policy', 'signing_policy',
+        '-extensions', 'signing_node_req',
+        '-out', "../%s/%s" % (cert_path, crt),
+        '-outdir', "../%s/" % cert_path,
+        '-in', "../%s/%s" % (cert_path, csr), 
+        '-batch'
+        ], cwd=ca_path)
+    if res:
+        print("Error signing certificate")
+        sys.exit(1)
 
 @cli.command('new-user')
 @click.option('--name', default='user', help='User Name')
