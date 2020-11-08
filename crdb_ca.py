@@ -62,7 +62,6 @@ extendedKeyUsage = serverAuth,clientAuth
 keyUsage = critical,digitalSignature,keyEncipherment
 extendedKeyUsage = clientAuth
     """)
-    rtext = t.render(ou=ou, cn=cn, days=days, md=md)
     try:
         os.mkdir(ca_dir)
         print("Created %s" % ca_dir)
@@ -77,13 +76,33 @@ extendedKeyUsage = clientAuth
     cnf = "%s/%s.cnf" % (ca_dir, prefix)
     crt = "%s/%s.crt" % (ca_dir, prefix)
     
-    res = subprocess.call(['openssl', 'genrsa', '-out', key, "2048"])
+    # First, make the private key
+    if not os.path.exists(key):
+        res = subprocess.call(['openssl', 'genrsa', '-out', key, "2048"])
+        if res != 0:
+            raise Exception("Error calling openssl")
+            sys.exit(1)
+    else:
+        print("%s already exists. Continuing" % key)
+
+    # Next, create the rendered jinja template from above  
+    rtext = t.render(ou=ou, cn=cn, days=days, md=md)
+    try:
+        cnf_file = open(cnf, 'w')
+        cnf_file.write(rtext)
+        cnf_file.close()
+    except Exception as err:
+        print(err)
+        print("Error writing %s: %s" % (cnf, str(err)))
+
+    res = subprocess.call([
+        'openssl', 'req', '-new', '-x509', 
+        '-config', cnf, '-key', key, '-out', crt, 
+        '-days', str(days), '-batch'])
+
     if res != 0:
-        raise Exception("Error calling openssl")
+        raise Exception("Error creating certificate request")
         sys.exit(1)
-
-
-
 @cli.command('new-node')
 @click.option('--name', default='node', help='Node name')
 def new_node(name):
