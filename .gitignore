@@ -1,0 +1,8 @@
+.*swp
+*pyc
+env
+__pycache__
+cockroach-data
+*.egg-info
+ca/
+
