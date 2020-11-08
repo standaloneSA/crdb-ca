@@ -103,6 +103,20 @@ extendedKeyUsage = clientAuth
     if res != 0:
         raise Exception("Error creating certificate request")
         sys.exit(1)
+
+    fo = open("%s/index.txt" % ca_dir, "w")
+    fo.truncate()
+    print("index.txt was reset")
+    fo.close()
+
+    fo = open("%s/serial.txt" % ca_dir, "w")
+    fo.truncate()
+    fo.write("01\n")
+    print("serial.txt was reset")
+    fo.close()
+
+    
+
 @cli.command('new-node')
 @click.option('--name', default='node', help='Node name')
 def new_node(name):
