@@ -2,6 +2,11 @@
 
 Simplistic script for generating new certificates for Cockroach. 
 
+Note: Don't use this. I only wrote this as an experiment to learn the process better. 
+
+If you need to manage cockroach certs, please do use the Cockroach Cert tool: 
+https://www.cockroachlabs.com/docs/v20.1/cockroach-cert.html
+
 ```
 crdb_ca.py --help
 Usage: crdb_ca.py [OPTIONS] COMMAND [ARGS]...
