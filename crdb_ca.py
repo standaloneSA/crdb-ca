@@ -6,8 +6,6 @@ import subprocess
 from jinja2 import Template
 import click
 
-supported_commands = ['new-ca', 'new-node', 'new-user']
-
 @click.group()
 @click.pass_context
 def cli(ctx):
@@ -16,11 +14,12 @@ def cli(ctx):
 @cli.command('new-ca')
 @click.option('--ou', default='Cockroach', help='Organizational Unit (default: Cockroach)')
 @click.option('--cn', default='Cockroach CA', help='Common Name (default: "Cockroach CA")')
-@click.option('--md', default='sha256', help='Message Digest (default: sha256')
+@click.option('--md', default='sha256', help='Message Digest (default: sha256)')
 @click.option('--days', default=3650, help='CA Cert lifetime in days (default: 3650)')
 @click.option('--ca-dir', default='ca', type=click.Path(), help='Path to the directory to store the CA files (default: "ca")')
 @click.option('--prefix', default='ca', type=click.Path(exists=False), help='Filename prefix (default: "ca")')
 def new_ca(ou, cn, md, days, ca_dir, prefix):
+    """ Creates a new Certificate Authority. """
     template = Template("""
 [ ca ]
 default_ca = CA_default
@@ -114,13 +113,15 @@ extendedKeyUsage = clientAuth
 
 @cli.command('new-node')
 @click.option('--name', default=None, required=True, help='Node name')
-@click.option('--cert-path', default='node', help='Path to store certificates')
-@click.option('--ca-path', default='ca', help='Path to directory that holds CA')
+@click.option('--cert-path', default='node', help='Path to store certificates (default: node/)')
+@click.option('--ca-path', default='ca', help='Path to directory that holds CA (default: ca/)')
 @click.option('--ca-prefix', default='ca', help='Prefix for CA key (default: ca)')
 @click.argument('sans', default=None, nargs=-1)
 def new_node(name, cert_path, ca_path, ca_prefix, sans):
-    """ SANS consist of one or more Subject Alternative Names 
+    """ Generates and signs a new Node key.
 
+
+        SANS consist of one or more Subject Alternative Names 
         Example: \n
         crdb_ca.py new-node --name foo DNS:foo DNS:foo.mydomain IP:1.2.3.4
     """
@@ -137,6 +138,9 @@ organizationName = {{ name }}
 [ extensions ]
 subjectAltName = {{ SANstring }}
     """)
+    if not len(sans):
+        print("Error: SANs are required")
+        sys.exit(1)
     SANstring = ' '.join(sans)
     #TODO - check the SAN formatting
     print(SANstring)
@@ -213,6 +217,7 @@ subjectAltName = {{ SANstring }}
 @click.option('--organization', default='CockroachDB', help='Organization Name (default: CockroachDB)')
 @click.option('--cert-path', default='user', help='Path to user certificates (default: user/)')
 def new_user(name, ca_path, ca_prefix, organization, cert_path):
+    """ Generates a signed User Certificate. """
     try:
         os.mkdir(cert_path)
         print("Created %s" % cert_path)
