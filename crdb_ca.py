@@ -21,7 +21,7 @@ def cli(ctx):
 @click.option('--ca-dir', default='ca', type=click.Path(), help='Path to the directory to store the CA files (default: "ca")')
 @click.option('--prefix', default='ca', type=click.Path(exists=False), help='Filename prefix (default: "ca")')
 def new_ca(ou, cn, md, days, ca_dir, prefix):
-    t = Template("""
+    template = Template("""
 [ ca ]
 default_ca = CA_default
 
@@ -86,14 +86,9 @@ extendedKeyUsage = clientAuth
         print("%s already exists. Continuing" % key)
 
     # Next, create the rendered jinja template from above  
-    rtext = t.render(ou=ou, cn=cn, days=days, md=md)
-    try:
-        cnf_file = open(cnf, 'w')
-        cnf_file.write(rtext)
-        cnf_file.close()
-    except Exception as err:
-        print(err)
-        print("Error writing %s: %s" % (cnf, str(err)))
+    cnf_text = template.render(ou=ou, cn=cn, days=days, md=md)
+    with open(cnf, 'w') as of:
+        of.write(cnf_text)
 
     res = subprocess.call([
         'openssl', 'req', '-new', '-x509', 
@@ -176,15 +171,15 @@ subjectAltName = {{ SANstring }}
     
     # Generate the node's config 
     cnf_text = template.render(name=name, SANstring=SANstring)
-    fo = open("%s/%s" % (cert_path, cnf), "w")
-    fo.truncate()
-    fo.write(cnf_text)
-    fo.close()
+    with open("%s/%s" % (cert_path, cnf), "w") as fo:
+        fo.truncate()
+        fo.write(cnf_text)
+
     print("Wrote certificate config to %s" % cnf)
     
     # Generate the CSR
     res = subprocess.call([
-        'openssl', 'req', '-new',
+         'openssl', 'req', '-new',
         '-config', cnf,
         '-key', key,
         '-out', csr,
@@ -212,10 +207,83 @@ subjectAltName = {{ SANstring }}
         sys.exit(1)
 
 @cli.command('new-user')
-@click.option('--name', default='user', help='User Name')
-def new_user(name):
-    print('In new_user')
+@click.option('--name', required=True, help='User Name')
+@click.option('--ca-path', default='ca', help='Path to CA (default: ca/)')
+@click.option('--ca-prefix', default='ca', help='CA file name prefix (default: ca)')
+@click.option('--organization', default='CockroachDB', help='Organization Name (default: CockroachDB)')
+@click.option('--cert-path', default='user', help='Path to user certificates (default: user/)')
+def new_user(name, ca_path, ca_prefix, organization, cert_path):
+    try:
+        os.mkdir(cert_path)
+        print("Created %s" % cert_path)
+    except FileExistsError:
+        print("%s already exists. Continuing" % cert_path)
+    except Exception as err:
+        print("Error: %s" % str(err))
+        sys.exit(1)
 
+    key = "%s.key" % name
+    crt = "%s.crt" % name
+    cnf = "%s.cnf" % name
+    csr = "%s.csr" % name
+
+    ca_cnf = "%s.cnf" % ca_prefix
+    ca_key = "%s.key" % ca_prefix
+    ca_crt = "%s.crt" % ca_prefix
+
+    template = Template("""
+[ req ]
+prompt=no
+distinguished_name = distinguished_name
+req_extensions = extensions
+
+[ distinguished_name ]
+organizationName = {{ organization }}
+commonName = {{ name }}
+
+[ extensions ]
+subjectAltName = DNS:{{ name }}
+    """)
+    cnf_text = template.render(name=name, organization=organization) 
+
+
+    # Generate the user's private key
+    res = subprocess.call([
+        'openssl', 'genrsa', '-out', '%s/%s' % (cert_path, key), '2048'])
+    
+    if res:
+        print("Error writing user's private key")
+        sys.exit(1)
+
+    # Generate the CNF
+    with open("%s/%s" % (cert_path, cnf), 'w') as fo:
+        fo.write(cnf_text)
+
+    # Generate the CSR
+    res = subprocess.call([
+        'openssl', 'req', '-new',
+        '-config', '%s/%s' % (cert_path, cnf),
+        '-key', '%s/%s' % (cert_path, key),
+        '-out', '%s/%s' % (cert_path, csr),
+        '-batch'])
+    
+    # Sign the certificate
+    res = subprocess.call([
+        'openssl', 'ca',
+        '-config', ca_cnf,
+        '-keyfile', ca_key,
+        '-cert', ca_crt,
+        '-policy', 'signing_policy',
+        '-extensions', 'signing_client_req',
+        '-out', '../%s/%s' % (cert_path, crt),
+        '-outdir', '../%s/' % cert_path,
+        '-in', '../%s/%s' % (cert_path, csr),
+        '-batch'
+        ], cwd=ca_path)
+
+    if res:
+        print("Error signing certificate for %s" % name)
+        sys.exit(1)
 
 if __name__ == '__main__':
     cli()
